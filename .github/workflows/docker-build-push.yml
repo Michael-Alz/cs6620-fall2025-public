@@ -26,7 +26,7 @@ jobs:
       id: meta
       uses: docker/metadata-action@v5
       with:
-        images: 690692840/cs6620-app
+        images: ${{ secrets.DOCKERHUB_USERNAME }}/cs6620-app
         tags: |
           type=ref,event=branch
           type=sha,prefix={{branch}}-
@@ -50,3 +50,35 @@ jobs:
           build.run_number=${{ github.run_number }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    
+    steps:
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+        aws-region: ${{ secrets.AWS_REGION }}
+        
+    - name: Deploy to EC2 via SSM
+      run: |
+        # Deploy the Docker image to EC2 instance
+        aws ssm send-command \
+          --instance-ids "${{ secrets.EC2_INSTANCE_ID }}" \
+          --document-name "AWS-RunShellScript" \
+          --comment "Deploy Docker image from GitHub Actions" \
+          --parameters 'commands=[
+            "docker pull ${{ secrets.DOCKERHUB_USERNAME }}/cs6620-app:week02",
+            "docker stop cs6620-app || true",
+            "docker rm cs6620-app || true", 
+            "docker run -d --name cs6620-app --restart unless-stopped -p 80:5000 ${{ secrets.DOCKERHUB_USERNAME }}/cs6620-app:week02"
+          ]'
+          
+    - name: Verify deployment command sent
+      run: |
+        echo "Deployment command sent successfully to EC2 instance ${{ secrets.EC2_INSTANCE_ID }}"
+        echo "Check AWS Systems Manager Run Command for execution status"
